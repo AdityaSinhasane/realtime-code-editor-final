@@ -1,8 +1,8 @@
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
-import path from 'path'
-import axios from 'axios'
+import path from "path";
+import axios from "axios";
 
 const app = express();
 
@@ -23,7 +23,6 @@ function reloadWebsite() {
 }
 
 setInterval(reloadWebsite, interval);
-
 
 const io = new Server(server, {
   cors: {
@@ -49,86 +48,81 @@ io.on("connection", (socket) => {
     currentRoom = roomId;
     currentUser = userName;
 
-    // Add the room if it doesn't exist
+    socket.join(roomId);
+
     if (!rooms.has(roomId)) {
       rooms.set(roomId, new Set());
     }
 
-    // Add the user to the room
     rooms.get(roomId).add(userName);
-    socket.join(roomId);
 
-    // Emit the updated list of users in the room
-    io.to(roomId).emit("userJoined", Array.from(rooms.get(roomId)));
+    io.to(roomId).emit("userJoined", Array.from(rooms.get(currentRoom)));
   });
 
   socket.on("codeChange", ({ roomId, code }) => {
     socket.to(roomId).emit("codeUpdate", code);
   });
 
-  socket.on("leaveRoom",()=>{
-    if(currentRoom && currentUser){
-        rooms.get(currentRoom).delete(currentUser);
-        io.to(currentRoom).emit("userJoined", Array.from(rooms.get(currentRoom)));
+  socket.on("leaveRoom", () => {
+    if (currentRoom && currentUser) {
+      rooms.get(currentRoom).delete(currentUser);
+      io.to(currentRoom).emit("userJoined", Array.from(rooms.get(currentRoom)));
 
-        socket.leave(currentRoom);
-        currentRoom = null;
-        currentUser = null;
+      socket.leave(currentRoom);
+
+      currentRoom = null;
+      currentUser = null;
     }
   });
 
-  socket.on("typing",({roomId, userName})=>{
+  socket.on("typing", ({ roomId, userName }) => {
     socket.to(roomId).emit("userTyping", userName);
   });
 
-  socket.on("languageChange",({roomId, language})=>{
+  socket.on("languageChange", ({ roomId, language }) => {
     io.to(roomId).emit("languageUpdate", language);
   });
 
-  socket.on("compileCode", async({code, roomId, language, version})=>{
-    if(rooms.has(roomId)){
+  socket.on("compileCode", async ({ code, roomId, language, version }) => {
+    if (rooms.has(roomId)) {
       const room = rooms.get(roomId);
-      try{
-        const response = await axios.post("https://emkc.org/api/v2/piston/execute",{
+      const response = await axios.post(
+        "https://emkc.org/api/v2/piston/execute",
+        {
           language,
           version,
-          files:[
+          files: [
             {
-              content: code
-            }
-          ]
-        })
-        room.output = response.data.run.output;
-        io.to(roomId).emit("codeResponse", response.data);
+              content: code,
+            },
+          ],
+        }
+      );
 
-      }
-      catch(err){
-        io.to(roomId).emit("codeResponse", { run: { output: "Error: Code execution failed." } });
-      }
-      
+      room.output = response.data.run.output;
+      io.to(roomId).emit("codeResponse", response.data);
     }
   });
 
-  socket.on("disconnect",()=>{
-    if(currentRoom && currentUser){
-        rooms.get(currentRoom).delete(currentUser);
-        io.to(currentRoom).emit("userJoined", Array.from(rooms.get(currentRoom)));
+  socket.on("disconnect", () => {
+    if (currentRoom && currentUser) {
+      rooms.get(currentRoom).delete(currentUser);
+      io.to(currentRoom).emit("userJoined", Array.from(rooms.get(currentRoom)));
     }
-    console.log("User Disconnected");
+    console.log("user Disconnected");
   });
 });
 
-const port = process.env.port || 5000;
+const port = process.env.PORT || 5000;
 
-const __dirname = path.dirname(new URL(import.meta.url).pathname);
+const __dirname = path.resolve();
 
 app.use(express.static(path.join(__dirname, "/frontend/dist")));
 
-app.get("*",(re,res)=>{
-  res.sendFile(path.join(__dirname,"frontend","dist","index.html"));
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "frontend", "dist", "index.html"));
 });
 
 server.listen(port, () => {
-  console.log("Server is Working on Port 5000");
+  console.log("server is working on port 5000");
 });
-
