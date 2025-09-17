@@ -6,7 +6,7 @@ import Editor from "@monaco-editor/react"; // Monaco code editor component
 import {v4 as uuid} from "uuid"
 
 // Connect to the Socket.IO server
-const socket = io("http://localhost:5000");
+const socket = io("https://realtime-code-editor-final-89hc.onrender.com");
 
 const App = () => {
   // ------------------- STATE VARIABLES -------------------
