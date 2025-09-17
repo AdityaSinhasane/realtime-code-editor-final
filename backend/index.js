@@ -1,15 +1,17 @@
-// Importing required modules
+
+
+
+// ------------------- IMPORT MODULES -------------------
 import express from "express";       // Web framework for Node.js
-import http from "http";             // Node's built-in HTTP module (used to create server)
-import { Server } from "socket.io";  // Socket.IO for real-time communication
-import path from "path";             // For working with file and directory paths
-import axios from "axios";           // For making HTTP requests
+import http from "http";             // Built-in HTTP server (wraps Express)
+import { Server } from "socket.io";  // Socket.IO for real-time events
+import path from "path";             // To resolve file paths
+import axios from "axios";           // For making HTTP requests (code execution)
 
-// Initialize the Express app
-const app = express();
+// ------------------- INIT EXPRESS + HTTP SERVER -------------------
+const app = express();                  // Create express app
+const server = http.createServer(app);  // Create HTTP server using express
 
-// Create an HTTP server using the Express app
-const server = http.createServer(app);
 
 // URL of the deployed site (used to keep it awake)
 const url = `https://realtime-code-editor-final-89hc.onrender.com`;
@@ -30,131 +32,118 @@ function reloadWebsite() {
 // Call reloadWebsite() every 30 seconds
 setInterval(reloadWebsite, interval);
 
-// Initialize Socket.IO server with CORS enabled (allow all origins)
+
+
+
+// ------------------- INIT SOCKET.IO -------------------
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-  },
+  cors: { origin: "*" },                // Allow all origins (dev)
 });
 
-// Create a Map to store rooms
-// Key = roomId, Value = Set of user names (who joined that room)
+// ------------------- DATA STORE -------------------
+// Map<roomId, { users:Set<string>, code:string, output?:string }>
 const rooms = new Map();
 
-// Handle Socket.IO connections
+// ------------------- SOCKET HANDLERS -------------------
 io.on("connection", (socket) => {
-    console.log("User Connected", socket.id); // Log new connection
+    console.log("✅ User connected:", socket.id);
 
-    // Variables to track the current room and user for this socket
-    let currentRoom = null;
-    let currentUser = null;
+    let currentRoom = null;   // Track which room this socket is in
+    let currentUser = null;   // Track user name
 
-    // Handle "join" event (when a user joins a room)
+    // -------- JOIN ROOM --------
     socket.on("join", ({ roomId, userName }) => {
-      // If the user was already in a room, remove them from it
-      if (currentRoom) {
-        socket.leave(currentRoom); // Leave the previous room
-        rooms.get(currentRoom).delete(currentUser); // Remove user from Set
-        // Send updated user list to everyone in that room
-        io.to(currentRoom).emit("userJoined", Array.from(rooms.get(currentRoom)));
+      // If socket was already inside a room → remove from there
+      if (currentRoom && rooms.has(currentRoom)) {
+        rooms.get(currentRoom).users.delete(currentUser);
+        io.to(currentRoom).emit("userJoined", Array.from(rooms.get(currentRoom).users));
+        socket.leave(currentRoom);
       }
 
-      // Save the new room and user info
       currentRoom = roomId;
       currentUser = userName;
 
-      socket.join(roomId); // Add the socket to the new room
-
-      // If the room doesn’t exist in Map, create it with an empty Set
+      // Create room if not exists
       if (!rooms.has(roomId)) {
-        rooms.set(roomId, new Set());
+        rooms.set(roomId, { users: new Set(), code: "// start code here" });
       }
 
-      rooms.get(roomId).add(userName); // Add user to the room’s Set
+      rooms.get(roomId).users.add(userName); // Add user
+      socket.join(roomId);                   // Join socket.io room
 
-      // Broadcast updated list of users in the new room
-      io.to(roomId).emit("userJoined", Array.from(rooms.get(currentRoom)));
+      // Send existing code to new user only
+      socket.emit("codeUpdate", rooms.get(roomId).code);
+
+      // Broadcast updated user list to all in the room
+      io.to(roomId).emit("userJoined", Array.from(rooms.get(roomId).users));
     });
 
-    // Handle "codeChange" event (when user edits code)
+    // -------- CODE CHANGE --------
     socket.on("codeChange", ({ roomId, code }) => {
-      // Send the code update to everyone else in the room (except sender)
-      socket.to(roomId).emit("codeUpdate", code);
+      if (rooms.has(roomId)) rooms.get(roomId).code = code;
+      socket.to(roomId).emit("codeUpdate", code); // notify others
     });
 
-    // Handle "leaveRoom" event
+    // -------- TYPING --------
+    socket.on("typing", ({ roomId, userName }) => {
+      socket.to(roomId).emit("userTyping", userName);
+    });
+
+    // -------- LANGUAGE CHANGE --------
+    socket.on("languageChange", ({ roomId, language }) => {
+      io.to(roomId).emit("languageUpdate", language);
+    });
+
+    // -------- EXECUTE CODE --------
+    socket.on("compileCode", async ({ code, roomId, language, version, input }) => {
+      try {
+        const res = await axios.post("https://emkc.org/api/v2/piston/execute", {
+          language,
+          version,
+          files: [{ content: code }],
+          stdin: input,                     // ✅ Pass input correctly
+        });
+
+        const out = res.data.run.output;
+        if (rooms.has(roomId)) rooms.get(roomId).output = out;
+
+        io.to(roomId).emit("codeResponse", res.data);
+      } catch (err) {
+        console.error("🚨 Execution error:", err.message);
+        io.to(roomId).emit("codeResponse", { run: { output: "Error executing code" } });
+      }
+    });
+
+    // -------- LEAVE ROOM --------
     socket.on("leaveRoom", () => {
-      if (currentRoom && currentUser) {
-        rooms.get(currentRoom).delete(currentUser); // Remove user from Set
-        io.to(currentRoom).emit("userJoined", Array.from(rooms.get(currentRoom))); // Broadcast updated user list
-
-        socket.leave(currentRoom); // Remove socket from room
-
-        // Reset variables
+      if (currentRoom && currentUser && rooms.has(currentRoom)) {
+        rooms.get(currentRoom).users.delete(currentUser);
+        io.to(currentRoom).emit("userJoined", Array.from(rooms.get(currentRoom).users));
+        socket.leave(currentRoom);
         currentRoom = null;
         currentUser = null;
       }
     });
 
-    // Handle "typing" event (notify others when someone is typing)
-    socket.on("typing", ({ roomId, userName }) => {
-      socket.to(roomId).emit("userTyping", userName);
-    });
-
-    // Handle "languageChange" event (broadcast selected language to room)
-    socket.on("languageChange", ({ roomId, language }) => {
-      io.to(roomId).emit("languageUpdate", language);
-    });
-
-    // Handle "compileCode" event (send code to API for execution)
-    socket.on("compileCode", async ({ code, roomId, language, version }) => {
-      if (rooms.has(roomId)) {
-        const room = rooms.get(roomId); // Get the room info
-        // Send POST request to Piston API to execute the code
-        const response = await axios.post(
-          "https://emkc.org/api/v2/piston/execute",
-          {
-            language,  // Programming language
-            version,   // Version of the language
-            files: [
-              {
-                content: code, // Code content to run
-              },
-            ],
-          }
-        );
-
-        room.output = response.data.run.output; // Save API output in room (optional)
-        // Send the execution result to all users in the room
-        io.to(roomId).emit("codeResponse", response.data);
-      }
-    });
-
-    // Handle disconnection of a user
+    // -------- DISCONNECT --------
     socket.on("disconnect", () => {
-      if (currentRoom && currentUser) {
-        rooms.get(currentRoom).delete(currentUser); // Remove user from Set
-        io.to(currentRoom).emit(" ", Array.from(rooms.get(currentRoom))); // Notify others
+      if (currentRoom && currentUser && rooms.has(currentRoom)) {
+        rooms.get(currentRoom).users.delete(currentUser);
+        io.to(currentRoom).emit("userJoined", Array.from(rooms.get(currentRoom).users));
       }
-      console.log("user Disconnected");
+      console.log("❌ User disconnected:", socket.id);
     });
 });
 
-// Port for the server (from env or fallback to 5000)
+// ------------------- SERVE FRONTEND -------------------
 const port = process.env.PORT || 5000;
-
-// Resolve __dirname (for ES modules)
 const __dirname = path.resolve();
+app.use(express.static(path.join(__dirname, "frontend", "dist")));
+app.get("*", (req, res) =>
+  res.sendFile(path.join(__dirname, "frontend", "dist", "index.html"))
+);
 
-// Serve static frontend files (React build)
-app.use(express.static(path.join(__dirname, "/frontend/dist")));
+// ------------------- START SERVER -------------------
+server.listen(port, () => console.log(`🚀 Server running on port ${port}`));
 
-// For any unknown route, send React's index.html (SPA fallback)
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "frontend", "dist", "index.html"));
-});
 
-// Start the HTTP server
-server.listen(port, () => {
-  console.log("server is working on port 5000");
-});

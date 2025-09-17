@@ -3,9 +3,10 @@ import { useEffect, useState } from "react"; // React hooks for state and lifecy
 import "./App.css"; // App styling
 import io from "socket.io-client"; // Client for Socket.IO (real-time)
 import Editor from "@monaco-editor/react"; // Monaco code editor component
+import {v4 as uuid} from "uuid"
 
 // Connect to the Socket.IO server
-const socket = io("https://realtime-code-editor-final-89hc.onrender.com");
+const socket = io("http://localhost:5000");
 
 const App = () => {
   // ------------------- STATE VARIABLES -------------------
@@ -111,10 +112,25 @@ const App = () => {
     socket.emit("languageChange", { roomId, language: newLanguage }); // Notify server
   };
 
+  const [userInput, setUserInput] = useState("");
+
+
   // Execute the code using backend
-  const runCode = () => {
-    socket.emit("compileCode", { code, roomId, language, version });
-  };
+ const runCode = () => {
+  socket.emit("compileCode", { 
+    code, 
+    roomId, 
+    language, 
+    version, 
+    input: userInput    // ✅ pass user input
+  });
+};
+
+
+  const createRoomId = () =>{
+    const roomId = uuid()
+    setRoomId(roomId);
+  }
 
   // ------------------- RENDER -------------------
   // If user hasn't joined a room yet, show join form
@@ -128,7 +144,9 @@ const App = () => {
             placeholder="Room Id"
             value={roomId}
             onChange={(e) => setRoomId(e.target.value)}
+
           />
+          <button onClick={createRoomId}>Create id</button>
           <input
             type="text"
             placeholder="Your Name"
@@ -193,9 +211,10 @@ const App = () => {
           theme="vs-dark"                // Editor theme
           options={{
             minimap: { enabled: false }, // Hide minimap
-            fontSize: 14,                // Font size
+            fontSize: 16,                // Font size
           }}
         />
+        <textarea className="input-console" value={userInput} onChange={e=>setUserInput(e.target.value)} placeholder="Enter input here..."/>
         <button className="run-btn" onClick={runCode}>
           Execute
         </button>
@@ -203,7 +222,7 @@ const App = () => {
           className="output-console"
           value={outPut}
           readOnly
-          placeholder="Output will appear here ..."
+          placeholder="Output will appear over here ..."
         />
       </div>
     </div>
